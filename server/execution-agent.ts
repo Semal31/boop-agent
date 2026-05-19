@@ -61,7 +61,7 @@ export function redactToolInputForLog(toolName: string, input: unknown): unknown
   };
 }
 
-const EXECUTION_SYSTEM = `You are a focused background worker for the user.
+const EXECUTION_SYSTEM_BASE = `You are a focused background worker for the user.
 
 Your job:
 1. Perform the task you were given, end to end.
@@ -95,11 +95,25 @@ Style:
 - Optimize for iMessage delivery: short sentences, bullets over paragraphs, no tables.
 - Prefer markdown with **bold** keywords and • bullets.
 - Under 500 words unless explicitly asked for more.
-- If you can't complete something, say why in one sentence.
+- If you can't complete something, say why in one sentence.`;
+
+// Appended when draft staging is enabled (interactive chats): the agent stages
+// external actions for a human to approve in a later turn.
+const DRAFT_SAFETY = `
 
 Safety:
 - Anything that sends a message, creates an event, or takes an external action: call save_draft with a JSON payload instead of the real send/create tool. Return the summary so the interaction agent can show it to the user.
 - Only the interaction agent's send_draft tool commits. You never commit.`;
+
+// Appended for unattended runs (e.g. automations): there is no approval turn
+// and no interaction agent, so the agent must finish the task and return the
+// result directly rather than staging a draft nobody can confirm.
+const NO_DRAFT_SAFETY = `
+
+Safety:
+- This is an unattended run with no human in the loop — there is no draft or approval step, so never ask for confirmation.
+- Complete the task and return the finished result directly. "Send me X" means produce X in your reply — it is not an external send.
+- Still avoid irreversible external actions (sending email, posting messages, creating events). If the task genuinely needs one, do the safe parts and state plainly what you could not do and why.`;
 
 export interface SpawnOptions {
   task: string;
@@ -108,6 +122,10 @@ export interface SpawnOptions {
   name?: string;
   runtimeConfig?: RuntimeConfig;
   imageStorageIds?: string[];
+  // Whether the agent should stage external actions as drafts for human
+  // approval. True for interactive chats; false for unattended runs like
+  // automations, where there is no approval turn. Defaults to true.
+  stageDrafts?: boolean;
 }
 
 export type SpawnExecutionAgentOpts = SpawnOptions;
@@ -149,7 +167,9 @@ export async function spawnExecutionAgent(opts: SpawnExecutionAgentOpts): Promis
 
   await convex.mutation(api.agents.update, { agentId, status: "running" });
 
-  const draftTools = opts.conversationId ? createDraftStagingTools(opts.conversationId) : [];
+  const stageDrafts = opts.stageDrafts ?? true;
+  const draftTools =
+    stageDrafts && opts.conversationId ? createDraftStagingTools(opts.conversationId) : [];
   const integrationServers =
     runtimeConfig.runtime === "claude"
       ? await buildMcpServersForIntegrations(opts.integrations, opts.conversationId)
@@ -183,7 +203,7 @@ export async function spawnExecutionAgent(opts: SpawnExecutionAgentOpts): Promis
     });
     const result = await runAgentRuntime(runtimeConfig, {
       prompt: executionPrompt,
-      systemPrompt: EXECUTION_SYSTEM,
+      systemPrompt: EXECUTION_SYSTEM_BASE + (stageDrafts ? DRAFT_SAFETY : NO_DRAFT_SAFETY),
       claudeMcpServers: mcpServers,
       tools: runtimeTools,
       allowedTools,

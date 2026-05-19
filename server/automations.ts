@@ -99,6 +99,19 @@ async function runAutomation(a: {
   });
   broadcast("automation_started", { automationId: a.automationId, runId, name: a.name });
 
+  // Advance the schedule UP FRONT, before the (often minutes-long) run. The
+  // tick loop fires every 30s on `nextRunAt <= now`; if we only advanced it
+  // after the run finished, every tick during the run would re-fire the same
+  // automation and the user would get a duplicate text per extra run.
+  // Pre-TZ automations have no stored timezone — fall back to the user's
+  // current setting so they don't keep firing in the host zone.
+  const tz = a.timezone ?? (await getUserTimezone());
+  await convex.mutation(api.automations.markRan, {
+    automationId: a.automationId,
+    lastRunAt: Date.now(),
+    nextRunAt: nextRunFor(a.schedule, tz) ?? undefined,
+  });
+
   const taskWithHistory = await withRunHistory(a.automationId, runId, a.task);
 
   try {
@@ -107,6 +120,9 @@ async function runAutomation(a: {
       integrations: a.integrations,
       conversationId: a.conversationId,
       name: `auto:${a.name}`,
+      // Unattended run: no approval turn, so the agent must return the
+      // finished result instead of staging a draft nobody can confirm.
+      stageDrafts: false,
     });
     await convex.mutation(api.automations.updateRun, {
       runId,
@@ -137,23 +153,22 @@ async function runAutomation(a: {
     });
     broadcast("automation_failed", { automationId: a.automationId, runId, error: String(err) });
   }
-
-  // Pre-TZ automations have no stored timezone — fall back to whatever the
-  // user's current setting is so they don't keep firing in the host zone.
-  const tz = a.timezone ?? (await getUserTimezone());
-  const next = nextRunFor(a.schedule, tz);
-  await convex.mutation(api.automations.markRan, {
-    automationId: a.automationId,
-    lastRunAt: Date.now(),
-    nextRunAt: next ?? undefined,
-  });
 }
+
+// Automations currently mid-run. `runAutomation` advances `nextRunAt` in Convex
+// before spawning, but that mutation is async — this in-memory set closes the
+// brief window where a second tick could fire the same automation before the
+// advance lands.
+const inFlight = new Set<string>();
 
 export async function tickAutomations(): Promise<void> {
   const all = await convex.query(api.automations.list, { enabledOnly: true });
   const now = Date.now();
-  const due = all.filter((a) => a.nextRunAt !== undefined && a.nextRunAt <= now);
+  const due = all.filter(
+    (a) => a.nextRunAt !== undefined && a.nextRunAt <= now && !inFlight.has(a.automationId),
+  );
   for (const a of due) {
+    inFlight.add(a.automationId);
     // fire-and-forget so one slow automation doesn't block others
     runAutomation({
       automationId: a.automationId,
@@ -164,7 +179,9 @@ export async function tickAutomations(): Promise<void> {
       timezone: a.timezone,
       conversationId: a.conversationId,
       notifyConversationId: a.notifyConversationId,
-    }).catch((err) => console.error("[automations] run error", err));
+    })
+      .catch((err) => console.error("[automations] run error", err))
+      .finally(() => inFlight.delete(a.automationId));
   }
 }
 
