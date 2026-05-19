@@ -36,6 +36,52 @@ export function validateSchedule(
   }
 }
 
+// How many past runs to show the agent, and how much of each result to keep.
+// Long enough that a daily automation won't repeat for ~2 months; truncated so
+// the injected history stays a bounded, modest addition to the task prompt.
+const PRIOR_RUNS_LIMIT = 60;
+const PRIOR_RESULT_MAXLEN = 600;
+
+// Execution agents are stateless and have no memory tools, so a recurring task
+// ("send me a car fact") has no idea what it already sent and loops back on
+// itself. This pulls the automation's own recent completed outputs and appends
+// them to the task with an instruction not to repeat. Best-effort: any failure
+// just returns the original task unchanged.
+async function withRunHistory(
+  automationId: string,
+  currentRunId: string,
+  task: string,
+): Promise<string> {
+  let priorResults: string[];
+  try {
+    // +1 covers the run just created for this tick, filtered out below.
+    const recent = await convex.query(api.automations.recentRuns, {
+      automationId,
+      limit: PRIOR_RUNS_LIMIT + 1,
+    });
+    priorResults = recent
+      .filter((r) => r.runId !== currentRunId && r.status === "completed" && !!r.result)
+      .slice(0, PRIOR_RUNS_LIMIT)
+      .map((r) => {
+        const text = r.result as string;
+        return text.length > PRIOR_RESULT_MAXLEN
+          ? text.slice(0, PRIOR_RESULT_MAXLEN) + "…"
+          : text;
+      });
+  } catch (err) {
+    console.error("[automations] run-history fetch failed", err);
+    return task;
+  }
+  if (priorResults.length === 0) return task;
+  const history = priorResults.map((r, i) => `${i + 1}. ${r}`).join("\n\n");
+  return (
+    `${task}\n\n` +
+    `--- ALREADY SENT ON PREVIOUS RUNS (most recent first) ---\n` +
+    `Do NOT repeat any of these. Pick something genuinely new and distinct:\n\n` +
+    history
+  );
+}
+
 async function runAutomation(a: {
   automationId: string;
   name: string;
@@ -53,9 +99,11 @@ async function runAutomation(a: {
   });
   broadcast("automation_started", { automationId: a.automationId, runId, name: a.name });
 
+  const taskWithHistory = await withRunHistory(a.automationId, runId, a.task);
+
   try {
     const res = await spawnExecutionAgent({
-      task: `AUTOMATION "${a.name}": ${a.task}`,
+      task: `AUTOMATION "${a.name}": ${taskWithHistory}`,
       integrations: a.integrations,
       conversationId: a.conversationId,
       name: `auto:${a.name}`,
