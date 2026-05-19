@@ -17,6 +17,9 @@ export default defineConfig(({ mode }) => {
     plugins: [react(), tailwindcss()],
     server: {
       port: 5173,
+      // Allow access via Tailscale MagicDNS hostnames (*.ts.net) — needed
+      // when the dashboard is fronted by `tailscale serve`.
+      allowedHosts: [".ts.net"],
       proxy: {
         "/api": {
           target: `http://localhost:${port}`,
