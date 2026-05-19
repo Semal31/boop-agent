@@ -37,9 +37,9 @@ export function validateSchedule(
 }
 
 // How many past runs to show the agent, and how much of each result to keep.
-// Long enough that a daily automation won't repeat for ~2 months; truncated so
+// Long enough that a daily automation won't repeat for ~1 month; truncated so
 // the injected history stays a bounded, modest addition to the task prompt.
-const PRIOR_RUNS_LIMIT = 60;
+const PRIOR_RUNS_LIMIT = 30;
 const PRIOR_RESULT_MAXLEN = 600;
 
 // Execution agents are stateless and have no memory tools, so a recurring task
