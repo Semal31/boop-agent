@@ -10,6 +10,7 @@ import {
   DashboardSquare01Icon,
   ArrowShrink02Icon,
   Settings01Icon,
+  Notebook01Icon,
   Moon02Icon,
   Sun03Icon,
 } from "@hugeicons/core-free-icons";
@@ -19,6 +20,7 @@ import { DashboardPanel } from "./components/DashboardPanel.js";
 import { AgentsPanel } from "./components/AgentsPanel.js";
 import { AutomationsPanel } from "./components/AutomationsPanel.js";
 import { MemoryPanel } from "./components/MemoryPanel.js";
+import { KnowledgePanel } from "./components/KnowledgePanel.js";
 import { EventsPanel } from "./components/EventsPanel.js";
 import { ConnectionsPanel } from "./components/ConnectionsPanel.js";
 import { ConsolidationPanel } from "./components/ConsolidationPanel.js";
@@ -32,6 +34,7 @@ type View =
   | "agents"
   | "automations"
   | "memory"
+  | "knowledge"
   | "events"
   | "consolidation"
   | "connections"
@@ -59,6 +62,7 @@ const NAV_ICONS: Record<View, any> = {
   agents: MachineRobotIcon,
   automations: WorkflowCircle03Icon,
   memory: AiBrain02Icon,
+  knowledge: Notebook01Icon,
   events: Activity01Icon,
   consolidation: ArrowShrink02Icon,
   connections: Link04Icon,
@@ -70,6 +74,7 @@ const NAV: { id: View; label: string }[] = [
   { id: "agents", label: "Agents" },
   { id: "automations", label: "Automations" },
   { id: "memory", label: "Memory" },
+  { id: "knowledge", label: "Knowledge" },
   { id: "events", label: "Events" },
   { id: "consolidation", label: "Consolidation" },
   { id: "connections", label: "Connections" },
@@ -310,6 +315,7 @@ export function App() {
             {view === "agents" && <AgentsPanel isDark={isDark} />}
             {view === "automations" && <AutomationsPanel isDark={isDark} />}
             {view === "memory" && <MemoryPanel isDark={isDark} />}
+            {view === "knowledge" && <KnowledgePanel isDark={isDark} />}
             {view === "events" && <EventsPanel isDark={isDark} />}
             {view === "consolidation" && <ConsolidationPanel isDark={isDark} />}
             {view === "connections" && <ConnectionsPanel isDark={isDark} />}

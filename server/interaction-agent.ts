@@ -2,6 +2,7 @@ import { z } from "zod";
 import { api } from "../convex/_generated/api.js";
 import { convex } from "./convex-client.js";
 import { createMemoryTools } from "./memory/tools.js";
+import { createKnowledgeTools } from "./knowledge/tools.js";
 import { extractAndStore } from "./memory/extract.js";
 import { spawnExecutionAgent } from "./execution-agent.js";
 import { listEnabledIntegrations } from "./integrations/registry.js";
@@ -36,6 +37,7 @@ Tone: Warm, witty, concise. Write like you're texting a friend. No corporate voi
 
 Your only tools:
 - recall / write_memory (durable memory for this user)
+- log_knowledge / search_knowledge (the user's perpetual second brain: places + facts)
 - spawn_agent (dispatches a sub-agent that CAN touch the world)
 - create_automation / list_automations / toggle_automation / delete_automation
 - list_drafts / send_draft / reject_draft
@@ -99,6 +101,29 @@ Safe to answer directly without recall (a SHORT list):
   back is fine; persistent facts still need write_memory).
 
 Everything else about the user — SPAWN or RECALL FIRST.
+
+Second brain (log_knowledge / search_knowledge) — separate from recall/write_memory:
+You have TWO durable stores. Keep them straight:
+- recall / write_memory: facts that help YOU act well as their agent — identity,
+  preferences, relationships, projects. This store decays and gets consolidated.
+- log_knowledge / search_knowledge: the user's deliberate, PERPETUAL second
+  brain — places they've been (with anecdotes) and arbitrary facts/notes they
+  want kept forever. This NEVER decays.
+
+Routing:
+- User describes a place/visit ("went to Joe's Pizza in the West Village, the
+  margherita was unreal") OR says "remember this / save this / log this / add to
+  my notes" → log_knowledge. For places, INFER country/city/area from what they
+  said + your geography knowledge ("West Village" → New York / Greenwich
+  Village) and set category (restaurant/bar/cafe/…). Only ask when truly
+  ambiguous. Don't spawn an agent for this — log it directly.
+- User asks "what restaurants have I been to in NYC?", "places I liked in
+  Tokyo", "what was that fact about X I told you?" → search_knowledge (use
+  kind/country/city/area/category filters for lists; a free query for fuzzy
+  recall; both to scope). This is local data, NOT a web lookup — never spawn.
+- A personal preference/identity that helps you act ("I'm vegetarian", "call me
+  Sam") → write_memory. A durable thing the user is filing away ("the cabin wifi
+  password is…") → log_knowledge. If a statement is both, it's fine to call both.
 
 Never fabricate URLs, site names, "sources", statistics, news, quotes, prices,
 dates, or any external fact. "Sources: [vague site names]" is fabrication.
@@ -420,6 +445,7 @@ export async function handleUserMessage(opts: HandleOpts): Promise<string> {
 
   const tools = [
     ...createMemoryTools(opts.conversationId),
+    ...createKnowledgeTools(opts.conversationId),
     ...createAutomationTools(opts.conversationId),
     ...createDraftDecisionTools(opts.conversationId, runtimeConfig),
     ...createSelfTools(),
@@ -504,6 +530,8 @@ export async function handleUserMessage(opts: HandleOpts): Promise<string> {
           : [
               "mcp__boop-memory__write_memory",
               "mcp__boop-memory__recall",
+              "mcp__boop-knowledge__log_knowledge",
+              "mcp__boop-knowledge__search_knowledge",
               "mcp__boop-spawn__spawn_agent",
               "mcp__boop-automations__create_automation",
               "mcp__boop-automations__list_automations",

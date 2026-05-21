@@ -7,6 +7,7 @@ import {
   listIntegrations,
 } from "./integrations/registry.js";
 import { createDraftStagingTools } from "./draft-tools.js";
+import { createKnowledgeReadTools } from "./knowledge/tools.js";
 import { EMPTY_USAGE, type UsageTotals } from "./usage.js";
 import { getRuntimeConfig, type RuntimeConfig } from "./runtime-config.js";
 import { runAgentRuntime } from "./runtimes/index.js";
@@ -72,6 +73,13 @@ Research discipline:
 - Prefer WebSearch for fresh/factual questions. WebFetch when you need the content of a known URL.
 - Cite real URLs only — NEVER invent sources. If a page failed to load, say so.
 - Cross-check when it matters: one search is rarely enough for a claim.
+
+The user's second brain (read-only):
+- search_knowledge reads the user's perpetual store of places they've visited
+  (with anecdotes) and durable facts/notes they've saved. Use it when a task
+  could draw on what the user has personally logged — e.g. "suggest a restaurant
+  they haven't tried" should first search_knowledge for places they HAVE logged.
+- You can READ this store but cannot write to it.
 
 Local browser:
 - If the optional "browser" integration is loaded, Local browser use is enabled and it controls a local Patchright Chrome profile on the user's machine.
@@ -170,6 +178,9 @@ export async function spawnExecutionAgent(opts: SpawnExecutionAgentOpts): Promis
   const stageDrafts = opts.stageDrafts ?? true;
   const draftTools =
     stageDrafts && opts.conversationId ? createDraftStagingTools(opts.conversationId) : [];
+  // Read-only access to the user's perpetual second brain (places + facts), so
+  // automations/tasks can build on what the user has logged. Never writes.
+  const knowledgeReadTools = createKnowledgeReadTools(opts.conversationId ?? "automation");
   const integrationServers =
     runtimeConfig.runtime === "claude"
       ? await buildMcpServersForIntegrations(opts.integrations, opts.conversationId)
@@ -179,12 +190,13 @@ export async function spawnExecutionAgent(opts: SpawnExecutionAgentOpts): Promis
       ? await buildRuntimeToolsForIntegrations(opts.integrations, opts.conversationId)
       : [];
   const mcpServers = integrationServers;
-  const runtimeTools = [...draftTools, ...integrationTools];
+  const runtimeTools = [...draftTools, ...knowledgeReadTools, ...integrationTools];
   const runtimeToolNamespaces = [...new Set(integrationTools.map((tool) => tool.namespace))];
   const allowedTools = [
     "WebSearch",
     "WebFetch",
     "Skill",
+    "mcp__boop-knowledge__*",
     ...Object.keys(mcpServers).flatMap((n) => [`mcp__${n}__*`]),
     ...(draftTools.length ? ["mcp__boop-drafts__*"] : []),
     ...runtimeToolNamespaces.flatMap((n) => [`mcp__${n}__*`]),

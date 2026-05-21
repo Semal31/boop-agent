@@ -63,6 +63,50 @@ export default defineSchema({
       filterFields: ["lifecycle"],
     }),
 
+  // The user's deliberate, PERPETUAL "second brain": places they've visited
+  // (with anecdotes, categorized country → city → area) plus arbitrary durable
+  // facts/notes. Distinct from `memoryRecords`, which the agent uses to act and
+  // which DECAYS. This table intentionally has NO tier/lifecycle/importance/
+  // decayRate/accessCount fields — those are exactly what server/memory/clean.ts
+  // and convex/consolidation.ts read, so omitting them keeps this store out of
+  // the decay + consolidation loops by construction. Do NOT add a lifecycle
+  // field here: this store is meant to last forever.
+  knowledgeEntries: defineTable({
+    entryId: v.string(),
+    kind: v.union(v.literal("place"), v.literal("fact"), v.literal("note")),
+    title: v.string(),
+    body: v.string(),
+    // Structured location — present for places (or anything the user geo-tags).
+    // Display fields keep the user's/agent's original casing; the *Key fields
+    // are normalized lowercase so equality/index lookups are case-insensitive.
+    country: v.optional(v.string()),
+    city: v.optional(v.string()),
+    area: v.optional(v.string()),
+    countryKey: v.optional(v.string()),
+    cityKey: v.optional(v.string()),
+    // Place sub-category (restaurant/bar/cafe/...). Free string, not a closed
+    // union — the value space is open and a forced enum would mis-bucket.
+    category: v.optional(v.string()),
+    tags: v.array(v.string()),
+    rating: v.optional(v.number()),
+    visitedAt: v.optional(v.number()),
+    embedding: v.optional(v.array(v.float64())),
+    source: v.string(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_entry_id", ["entryId"])
+    .index("by_kind", ["kind"])
+    // One compound index serves every granularity of "what places in X" via
+    // prefix range scans: all places → country → country/city → +area.
+    .index("by_kind_location", ["kind", "countryKey", "cityKey", "area"])
+    .index("by_createdAt", ["createdAt"])
+    .vectorIndex("by_embedding", {
+      vectorField: "embedding",
+      dimensions: 1024,
+      filterFields: ["kind", "countryKey", "cityKey"],
+    }),
+
   executionAgents: defineTable({
     agentId: v.string(),
     conversationId: v.optional(v.string()),
