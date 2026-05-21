@@ -167,6 +167,7 @@ function buildLogTool(conversationId: string): RuntimeTool {
 • Places/visits the user describes (restaurants, bars, cafes, hotels, museums, etc.) with an anecdote — FILL IN country/city/area by inferring from what they said + your geography knowledge. E.g. "Joe's Pizza in the West Village" → country="United States", city="New York", area="Greenwich Village", category="restaurant". Only ask the user when genuinely ambiguous.
 • Any durable fact or note the user wants kept forever ("remember that…", "save this…").
 Suggested place categories: restaurant, bar, cafe, bakery, hotel, museum, park, shop, attraction, other.
+This logs exactly ONE entry. If the user mentions several places at once, call this tool once per place — never pack multiple venues into a single entry.
 If this is a repeat visit to a place already in the store, pass appendToEntryId (from search_knowledge) to append the new anecdote instead of creating a duplicate.`,
     {
       kind: kindEnum.describe(

@@ -117,6 +117,11 @@ Routing:
   said + your geography knowledge ("West Village" → New York / Greenwich
   Village) and set category (restaurant/bar/cafe/…). Only ask when truly
   ambiguous. Don't spawn an agent for this — log it directly.
+  If the user names MULTIPLE places in one message, call log_knowledge once PER
+  place (one entry each) — NEVER combine several venues into a single entry, and
+  don't skip any. Log them all before you reply, then confirm the count. Carry
+  each place's own anecdote/dish/rating onto its own entry; apply a shared city
+  the user states once (e.g. "in Tokyo: A, B, C") to every place in the list.
 - User asks "what restaurants have I been to in NYC?", "places I liked in
   Tokyo", "what was that fact about X I told you?" → search_knowledge (use
   kind/country/city/area/category filters for lists; a free query for fuzzy
