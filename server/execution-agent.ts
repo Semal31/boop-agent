@@ -76,9 +76,11 @@ Research discipline:
 
 The user's second brain (read-only):
 - search_knowledge reads the user's perpetual store of places they've visited
-  (with anecdotes) and durable facts/notes they've saved. Use it when a task
-  could draw on what the user has personally logged — e.g. "suggest a restaurant
-  they haven't tried" should first search_knowledge for places they HAVE logged.
+  (with anecdotes), drinks they've had (kind="drink", with category/venue), and
+  durable facts/notes they've saved. Use it when a task could draw on what the
+  user has personally logged — e.g. "suggest a restaurant they haven't tried"
+  should first search_knowledge for places they HAVE logged, and "recommend a
+  beer" can check what they've already rated.
 - You can READ this store but cannot write to it.
 
 Local browser:

@@ -31,7 +31,7 @@ Rules:
   - knowledge: facts about their world
   - context: current ongoing situation
 - Importance defaults: identity 0.85, correction 0.80, relationship 0.75, preference 0.70, project 0.65, knowledge 0.60, context 0.40. Bump up or down only when you have a clear reason — trust the defaults.
-- Do NOT extract place visits / restaurant or venue anecdotes, nor things the user explicitly asked to "save / log / remember" as a note — those live in a separate perpetual knowledge store and would only decay here. Still DO extract durable preferences/identity revealed in passing (e.g. "I'm vegetarian", "I love spicy food") even if mentioned alongside a place.
+- Do NOT extract place visits / restaurant or venue anecdotes, drink logs (a specific beer/cocktail they had + what they thought), nor things the user explicitly asked to "save / log / remember" as a note — those live in a separate perpetual knowledge store and would only decay here. Still DO extract durable preferences/identity revealed in passing (e.g. "I'm vegetarian", "I love spicy food", "I only drink IPAs", "I'm teetotal now") even if mentioned alongside a place or drink.
 - The "corrects" field is ONLY for segment="correction". Omit it (or null) for everything else.
 - The "describesImage" field is true ONLY for the one fact (if any) that describes the inbound image. Omit it (or false) for all other facts.
 - Return empty facts array if nothing durable.

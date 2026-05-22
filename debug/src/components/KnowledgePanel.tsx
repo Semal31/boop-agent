@@ -10,11 +10,12 @@ import {
   subtlePanelClass,
 } from "./PanelPrimitives.js";
 
-type Kind = "all" | "place" | "fact" | "note";
+type Kind = "all" | "place" | "fact" | "note" | "drink";
 
 const KIND_OPTIONS: { value: Kind; label: string }[] = [
   { value: "all", label: "All" },
   { value: "place", label: "Places" },
+  { value: "drink", label: "Drinks" },
   { value: "fact", label: "Facts" },
   { value: "note", label: "Notes" },
 ];
@@ -23,6 +24,10 @@ const KIND_BADGE: Record<string, { dark: string; light: string }> = {
   place: {
     dark: "text-emerald-400 bg-emerald-400/10 border-emerald-500/20",
     light: "text-emerald-600 bg-emerald-50 border-emerald-200",
+  },
+  drink: {
+    dark: "text-rose-400 bg-rose-400/10 border-rose-500/20",
+    light: "text-rose-600 bg-rose-50 border-rose-200",
   },
   fact: {
     dark: "text-blue-400 bg-blue-400/10 border-blue-500/20",
@@ -69,6 +74,7 @@ export function KnowledgePanel({ isDark }: { isDark: boolean }) {
         (r.title ?? "").toLowerCase().includes(q) ||
         (r.body ?? "").toLowerCase().includes(q) ||
         (r.area ?? "").toLowerCase().includes(q) ||
+        (r.venue ?? "").toLowerCase().includes(q) ||
         (r.category ?? "").toLowerCase().includes(q) ||
         (r.tags ?? []).some((t: string) => t.toLowerCase().includes(q))
       );
@@ -209,6 +215,9 @@ export function KnowledgePanel({ isDark }: { isDark: boolean }) {
                   <div className={`text-sm font-medium ${isDark ? "text-zinc-100" : "text-zinc-900"}`}>
                     {r.title}
                   </div>
+                  {r.venue && (
+                    <div className={`text-[11px] ${mutedTextClass(isDark)}`}>@ {r.venue}</div>
+                  )}
                   {breadcrumb && (
                     <div className={`text-[11px] ${mutedTextClass(isDark)}`}>{breadcrumb}</div>
                   )}
@@ -247,6 +256,14 @@ export function KnowledgePanel({ isDark }: { isDark: boolean }) {
                             {r.source}
                           </span>
                         </div>
+                        {r.venue && (
+                          <div>
+                            Venue:{" "}
+                            <span className={isDark ? "text-slate-400" : "text-slate-600"}>
+                              {r.venue}
+                            </span>
+                          </div>
+                        )}
                         {r.visitedAt && (
                           <div>
                             Visited:{" "}

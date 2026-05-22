@@ -64,29 +64,40 @@ export default defineSchema({
     }),
 
   // The user's deliberate, PERPETUAL "second brain": places they've visited
-  // (with anecdotes, categorized country → city → area) plus arbitrary durable
-  // facts/notes. Distinct from `memoryRecords`, which the agent uses to act and
-  // which DECAYS. This table intentionally has NO tier/lifecycle/importance/
-  // decayRate/accessCount fields — those are exactly what server/memory/clean.ts
-  // and convex/consolidation.ts read, so omitting them keeps this store out of
+  // (with anecdotes, categorized country → city → area), drinks they've had
+  // (beers, cocktails, …), plus arbitrary durable facts/notes. Distinct from
+  // `memoryRecords`, which the agent uses to act and which DECAYS. This table
+  // intentionally has NO tier/lifecycle/importance/decayRate/accessCount
+  // fields — those are exactly what server/memory/clean.ts and
+  // convex/consolidation.ts read, so omitting them keeps this store out of
   // the decay + consolidation loops by construction. Do NOT add a lifecycle
   // field here: this store is meant to last forever.
   knowledgeEntries: defineTable({
     entryId: v.string(),
-    kind: v.union(v.literal("place"), v.literal("fact"), v.literal("note")),
+    kind: v.union(
+      v.literal("place"),
+      v.literal("fact"),
+      v.literal("note"),
+      v.literal("drink"),
+    ),
     title: v.string(),
     body: v.string(),
-    // Structured location — present for places (or anything the user geo-tags).
-    // Display fields keep the user's/agent's original casing; the *Key fields
-    // are normalized lowercase so equality/index lookups are case-insensitive.
+    // Structured location — present for places (or anything the user geo-tags,
+    // e.g. a cocktail's venue location). Display fields keep the user's/agent's
+    // original casing; the *Key fields are normalized lowercase so
+    // equality/index lookups are case-insensitive.
     country: v.optional(v.string()),
     city: v.optional(v.string()),
     area: v.optional(v.string()),
     countryKey: v.optional(v.string()),
     cityKey: v.optional(v.string()),
-    // Place sub-category (restaurant/bar/cafe/...). Free string, not a closed
+    // Place sub-category (restaurant/bar/cafe/...) or, for kind="drink", the
+    // drink type (beer/cocktail/wine/spirit/...). Free string, not a closed
     // union — the value space is open and a forced enum would mis-bucket.
     category: v.optional(v.string()),
+    // For kind="drink": the bar/restaurant where it was had (omitted for a beer
+    // at home or from a shop). Free-form, not keyed/indexed.
+    venue: v.optional(v.string()),
     tags: v.array(v.string()),
     rating: v.optional(v.number()),
     visitedAt: v.optional(v.number()),

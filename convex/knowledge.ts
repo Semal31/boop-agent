@@ -7,7 +7,12 @@ import type { Id } from "./_generated/dataModel";
 // schema.ts — this table is intentionally excluded from the decay/consolidation
 // loops, so there is no lifecycle/tier handling here.
 
-const kindV = v.union(v.literal("place"), v.literal("fact"), v.literal("note"));
+const kindV = v.union(
+  v.literal("place"),
+  v.literal("fact"),
+  v.literal("note"),
+  v.literal("drink"),
+);
 
 const COUNTS_SCAN_LIMIT = 5000;
 
@@ -23,6 +28,7 @@ export const create = mutation({
     countryKey: v.optional(v.string()),
     cityKey: v.optional(v.string()),
     category: v.optional(v.string()),
+    venue: v.optional(v.string()),
     tags: v.array(v.string()),
     rating: v.optional(v.number()),
     visitedAt: v.optional(v.number()),
@@ -55,6 +61,7 @@ export const update = mutation({
     countryKey: v.optional(v.string()),
     cityKey: v.optional(v.string()),
     category: v.optional(v.string()),
+    venue: v.optional(v.string()),
     tags: v.optional(v.array(v.string())),
     rating: v.optional(v.number()),
     visitedAt: v.optional(v.number()),
@@ -277,6 +284,7 @@ export const countsByKind = query({
       place: all.filter((r) => r.kind === "place").length,
       fact: all.filter((r) => r.kind === "fact").length,
       note: all.filter((r) => r.kind === "note").length,
+      drink: all.filter((r) => r.kind === "drink").length,
       total: all.length,
       truncated: all.length === COUNTS_SCAN_LIMIT,
       scanLimit: COUNTS_SCAN_LIMIT,

@@ -8,7 +8,7 @@ import { runtimeText, type RuntimeTool } from "../runtimes/types.js";
 
 const NAMESPACE = "boop-knowledge";
 
-const kindEnum = z.enum(["place", "fact", "note"]);
+const kindEnum = z.enum(["place", "fact", "note", "drink"]);
 
 function makeEntryId(): string {
   return `kn_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
@@ -41,7 +41,8 @@ function firstLine(text: string): string {
 }
 
 function formatResults(rows: any[]): string {
-  // Group place listings by neighborhood/city; keep facts & notes flat.
+  // Group place listings by neighborhood/city; group drinks by type; keep
+  // facts & notes flat.
   const allPlaces = rows.length > 0 && rows.every((r) => r.kind === "place");
   if (allPlaces) {
     const groups = new Map<string, any[]>();
@@ -63,9 +64,30 @@ function formatResults(rows: any[]): string {
       })
       .join("\n\n");
   }
+  const allDrinks = rows.length > 0 && rows.every((r) => r.kind === "drink");
+  if (allDrinks) {
+    const groups = new Map<string, any[]>();
+    for (const r of rows) {
+      const key = r.category || "Other";
+      const list = groups.get(key) ?? [];
+      list.push(r);
+      groups.set(key, list);
+    }
+    return [...groups.entries()]
+      .map(([type, items]) => {
+        const lines = items
+          .map((i) => {
+            const where = [i.venue, i.city].filter(Boolean).join(", ");
+            return `  • ${i.title}${i.rating ? ` (${i.rating}★)` : ""}${where ? ` @ ${where}` : ""} — ${firstLine(i.body)} [${i.entryId}]`;
+          })
+          .join("\n");
+        return `${type}:\n${lines}`;
+      })
+      .join("\n\n");
+  }
   return rows
     .map((r) => {
-      const loc = [r.area, r.city, r.country].filter(Boolean).join(", ");
+      const loc = [r.venue, r.area, r.city, r.country].filter(Boolean).join(", ");
       return `• [${r.kind}] ${r.title}${loc ? ` (${loc})` : ""}: ${firstLine(r.body)} [${r.entryId}]`;
     })
     .join("\n");
@@ -75,17 +97,20 @@ function buildSearchTool(conversationId: string): RuntimeTool {
   return defineRuntimeTool(
     NAMESPACE,
     "search_knowledge",
-    `Search the user's perpetual second-brain store (places they've visited with anecdotes, plus durable facts/notes). Two modes, combinable:
-• Structured listing — pass kind/country/city/area/category to get an EXHAUSTIVE list (e.g. all restaurants in NYC). Place results come back grouped by neighborhood, each with its anecdote and entry id.
-• Fuzzy recall — pass a free "query" to semantically find something the user vaguely remembers ("that fact about my bike").
-Pass both to scope a fuzzy search to a place (e.g. query + city). Use country/city DISPLAY names (e.g. "New York", "United States"); matching is case-insensitive.`,
+    `Search the user's perpetual second-brain store (places they've visited with anecdotes, drinks they've had, plus durable facts/notes). Two modes, combinable:
+• Structured listing — pass kind/country/city/area/category to get an EXHAUSTIVE list (e.g. all restaurants in NYC; all beers via kind="drink" + category="beer"). Place results come back grouped by neighborhood, drink results grouped by type — each with its anecdote and entry id.
+• Fuzzy recall — pass a free "query" to semantically find something the user vaguely remembers ("that fact about my bike", "the negroni I liked").
+Pass both to scope a fuzzy search (e.g. query + city). Use country/city DISPLAY names (e.g. "New York", "United States"); matching is case-insensitive.`,
     {
       query: z.string().optional().describe("Free text for fuzzy semantic recall."),
-      kind: kindEnum.optional().describe("Restrict to place | fact | note."),
+      kind: kindEnum.optional().describe("Restrict to place | fact | note | drink."),
       country: z.string().optional(),
       city: z.string().optional(),
       area: z.string().optional().describe("Neighborhood/area, e.g. 'Greenwich Village'."),
-      category: z.string().optional().describe("For places: restaurant/bar/cafe/etc."),
+      category: z
+        .string()
+        .optional()
+        .describe("For places: restaurant/bar/cafe/etc. For drinks: beer/cocktail/wine/etc."),
       limit: z.number().optional().default(50),
     },
     async (args) => {
@@ -165,20 +190,28 @@ function buildLogTool(conversationId: string): RuntimeTool {
     "log_knowledge",
     `Save something durable to the user's PERPETUAL second-brain store (it never decays). Use for:
 • Places/visits the user describes (restaurants, bars, cafes, hotels, museums, etc.) with an anecdote — FILL IN country/city/area by inferring from what they said + your geography knowledge. E.g. "Joe's Pizza in the West Village" → country="United States", city="New York", area="Greenwich Village", category="restaurant". Only ask the user when genuinely ambiguous.
+• Drinks the user had (kind="drink"). Set title = the drink/beer name, category = the drink type (beer/cocktail/wine/spirit/…), body = what they thought, and rating if given. For a cocktail at a bar, set venue = the bar/restaurant and infer country/city/area from it like a place. For a beer at home or from a shop, just title + body + category="beer" (+ rating); omit venue/location.
 • Any durable fact or note the user wants kept forever ("remember that…", "save this…").
-Suggested place categories: restaurant, bar, cafe, bakery, hotel, museum, park, shop, attraction, other.
-This logs exactly ONE entry. If the user mentions several places at once, call this tool once per place — never pack multiple venues into a single entry.
-If this is a repeat visit to a place already in the store, pass appendToEntryId (from search_knowledge) to append the new anecdote instead of creating a duplicate.`,
+Suggested place categories: restaurant, bar, cafe, bakery, hotel, museum, park, shop, attraction, other. Suggested drink categories: beer, cocktail, wine, spirit, cider, other.
+This logs exactly ONE entry. If the user mentions several places/drinks at once, call this tool once per item — never pack multiple into a single entry.
+If this is a repeat of something already in the store (revisit a place, had the same beer again), pass appendToEntryId (from search_knowledge) to append the new anecdote instead of creating a duplicate.`,
     {
       kind: kindEnum.describe(
-        "place = a venue/location with an anecdote; fact = a durable assertion; note = freeform dump.",
+        "place = a venue/location with an anecdote; drink = a beer/cocktail/etc. you had; fact = a durable assertion; note = freeform dump.",
       ),
-      title: z.string().describe("Place name, or a short headline for the fact/note."),
-      body: z.string().describe("The anecdote, fact detail, or note text."),
-      country: z.string().optional().describe("Inferred country (display form), for places."),
-      city: z.string().optional().describe("Inferred city (display form), for places."),
+      title: z.string().describe("Place name, drink name, or a short headline for the fact/note."),
+      body: z.string().describe("The anecdote, the verdict on the drink, fact detail, or note text."),
+      country: z.string().optional().describe("Inferred country (display form), for places/cocktail venues."),
+      city: z.string().optional().describe("Inferred city (display form), for places/cocktail venues."),
       area: z.string().optional().describe("Neighborhood/area, e.g. 'Greenwich Village'."),
-      category: z.string().optional().describe("For places: restaurant/bar/cafe/etc."),
+      category: z
+        .string()
+        .optional()
+        .describe("For places: restaurant/bar/cafe/etc. For drinks: beer/cocktail/wine/etc."),
+      venue: z
+        .string()
+        .optional()
+        .describe("For drinks: the bar/restaurant where you had it (omit for a beer at home/from a shop)."),
       tags: z.array(z.string()).optional().describe("Optional freeform tags."),
       rating: z.number().min(0).max(5).optional().describe("Optional 0-5 rating."),
       visitedAt: z
@@ -188,10 +221,18 @@ If this is a repeat visit to a place already in the store, pass appendToEntryId 
       appendToEntryId: z
         .string()
         .optional()
-        .describe("Existing entry id to append this anecdote to (repeat visit)."),
+        .describe("Existing entry id to append this anecdote to (repeat visit / same drink again)."),
     },
     async (args) => {
-      const embedText = [args.title, args.body, args.country, args.city, args.area, args.category]
+      const embedText = [
+        args.title,
+        args.body,
+        args.venue,
+        args.country,
+        args.city,
+        args.area,
+        args.category,
+      ]
         .filter(Boolean)
         .join("\n");
       const embedding = (await embed(embedText)) ?? undefined;
@@ -224,6 +265,7 @@ If this is a repeat visit to a place already in the store, pass appendToEntryId 
         countryKey: normKey(args.country),
         cityKey: normKey(args.city),
         category: args.category,
+        venue: args.venue,
         tags: args.tags ?? [],
         rating: args.rating,
         visitedAt: Number.isNaN(visitedAt) ? undefined : visitedAt,
@@ -240,7 +282,7 @@ If this is a repeat visit to a place already in the store, pass appendToEntryId 
           category: args.category ?? null,
         }),
       });
-      const where = [args.city, args.area].filter(Boolean).join(" · ");
+      const where = [args.venue, args.city, args.area].filter(Boolean).join(" · ");
       return runtimeText(`Logged ${entryId} (${args.kind}${where ? ` · ${where}` : ""}).`);
     },
   );
