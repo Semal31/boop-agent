@@ -141,7 +141,7 @@ Use when the user says "use opus", "switch to sonnet", "use Codex mini", "make i
       {
         model: z
           .string()
-          .describe('Model to use. Canonical ID like "claude-opus-4-7" or "gpt-5.4-mini", or an alias.'),
+          .describe('Model to use. Canonical ID like "claude-opus-4-8" or "gpt-5.4-mini", or an alias.'),
       },
       async ({ model }) => {
         const runtime = (await getRuntimeConfig()).runtime;

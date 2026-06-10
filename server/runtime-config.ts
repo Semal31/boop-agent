@@ -65,8 +65,8 @@ export const RUNTIME_ALIASES: Record<string, RuntimeName> = {
 
 // Backward-compatible names kept for existing imports and prompt text.
 export const MODEL_ALIASES: Record<string, string> = {
-  opus: "claude-opus-4-7",
-  "opus 4.7": "claude-opus-4-7",
+  opus: "claude-opus-4-8",
+  "opus 4.8": "claude-opus-4-8",
   sonnet: "claude-sonnet-4-6",
   "sonnet 4.6": "claude-sonnet-4-6",
   haiku: "claude-haiku-4-5-20251001",
@@ -74,7 +74,7 @@ export const MODEL_ALIASES: Record<string, string> = {
 };
 
 export const KNOWN_MODELS = new Set<string>([
-  "claude-opus-4-7",
+  "claude-opus-4-8",
   "claude-sonnet-4-6",
   "claude-haiku-4-5-20251001",
 ]);
