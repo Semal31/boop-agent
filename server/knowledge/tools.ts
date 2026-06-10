@@ -36,14 +36,67 @@ function normKey(s?: string): string | undefined {
   return KEY_ALIASES[trimmed] ?? trimmed;
 }
 
-function firstLine(text: string): string {
-  return text.split("\n")[0].trim();
+// Up to this many results, every entry is rendered with its FULL body — the
+// second brain must hand back complete notes, not teasers. Past it, listings
+// fall back to one-line snippets (clearly marked) to keep 50-place lists
+// readable; get_knowledge fetches any full entry by id.
+const FULL_BODY_LIMIT = 5;
+// In relevance-ordered (fuzzy query) results, the top hits are almost always
+// what the user is asking about — include their full bodies even when the
+// result set is long.
+const QUERY_TOP_FULL = 3;
+
+const SNIPPET_FOOTER =
+  "(Bodies above are first-line snippets — call get_knowledge with an entry id for the full text.)";
+
+function snippetLine(text: string): string {
+  const trimmed = text.trim();
+  const nl = trimmed.indexOf("\n");
+  if (nl < 0) return trimmed;
+  return `${trimmed.slice(0, nl).trim()} […]`;
 }
 
-function formatResults(rows: any[]): string {
-  // Group place listings by neighborhood/city; group drinks by type; keep
-  // facts & notes flat.
-  const allPlaces = rows.length > 0 && rows.every((r) => r.kind === "place");
+function indentBody(text: string): string {
+  return text
+    .trim()
+    .split("\n")
+    .map((l) => `    ${l}`)
+    .join("\n");
+}
+
+function formatEntryFull(r: any): string {
+  const loc = [r.venue, r.area, r.city, r.country].filter(Boolean).join(", ");
+  const meta = [r.category, r.rating != null ? `${r.rating}★` : undefined]
+    .filter(Boolean)
+    .join(", ");
+  const header = `• [${r.kind}] ${r.title}${meta ? ` (${meta})` : ""}${loc ? ` — ${loc}` : ""} [${r.entryId}]`;
+  const body = (r.body ?? "").trim();
+  return body ? `${header}\n${indentBody(body)}` : header;
+}
+
+function snippetEntry(r: any): string {
+  const loc = [r.venue, r.area, r.city, r.country].filter(Boolean).join(", ");
+  return `• [${r.kind}] ${r.title}${loc ? ` (${loc})` : ""}: ${snippetLine(r.body)} [${r.entryId}]`;
+}
+
+export function formatResults(rows: any[], opts: { relevanceOrdered?: boolean } = {}): string {
+  // Small result sets always come back complete — this is the "talk to your
+  // second brain" path, where a truncated note is useless.
+  if (rows.length <= FULL_BODY_LIMIT) {
+    return rows.map(formatEntryFull).join("\n\n");
+  }
+
+  // Relevance-ordered (fuzzy) results: full text for the top hits, snippets
+  // for the tail. Grouping would destroy the ranking, so keep them flat.
+  if (opts.relevanceOrdered) {
+    const top = rows.slice(0, QUERY_TOP_FULL).map(formatEntryFull).join("\n\n");
+    const rest = rows.slice(QUERY_TOP_FULL).map(snippetEntry).join("\n");
+    return `Top matches (full text):\n\n${top}\n\nOther matches:\n${rest}\n\n${SNIPPET_FOOTER}`;
+  }
+
+  // Structured listings: group place results by neighborhood/city and drinks
+  // by type; keep facts & notes flat.
+  const allPlaces = rows.every((r) => r.kind === "place");
   if (allPlaces) {
     const groups = new Map<string, any[]>();
     for (const r of rows) {
@@ -52,19 +105,20 @@ function formatResults(rows: any[]): string {
       list.push(r);
       groups.set(key, list);
     }
-    return [...groups.entries()]
+    const grouped = [...groups.entries()]
       .map(([area, items]) => {
         const lines = items
           .map(
             (i) =>
-              `  • ${i.title}${i.category ? ` (${i.category}` + (i.rating ? `, ${i.rating}★` : "") + ")" : i.rating ? ` (${i.rating}★)` : ""} — ${firstLine(i.body)} [${i.entryId}]`,
+              `  • ${i.title}${i.category ? ` (${i.category}` + (i.rating ? `, ${i.rating}★` : "") + ")" : i.rating ? ` (${i.rating}★)` : ""} — ${snippetLine(i.body)} [${i.entryId}]`,
           )
           .join("\n");
         return `${area}:\n${lines}`;
       })
       .join("\n\n");
+    return `${grouped}\n\n${SNIPPET_FOOTER}`;
   }
-  const allDrinks = rows.length > 0 && rows.every((r) => r.kind === "drink");
+  const allDrinks = rows.every((r) => r.kind === "drink");
   if (allDrinks) {
     const groups = new Map<string, any[]>();
     for (const r of rows) {
@@ -73,24 +127,20 @@ function formatResults(rows: any[]): string {
       list.push(r);
       groups.set(key, list);
     }
-    return [...groups.entries()]
+    const grouped = [...groups.entries()]
       .map(([type, items]) => {
         const lines = items
           .map((i) => {
             const where = [i.venue, i.city].filter(Boolean).join(", ");
-            return `  • ${i.title}${i.rating ? ` (${i.rating}★)` : ""}${where ? ` @ ${where}` : ""} — ${firstLine(i.body)} [${i.entryId}]`;
+            return `  • ${i.title}${i.rating ? ` (${i.rating}★)` : ""}${where ? ` @ ${where}` : ""} — ${snippetLine(i.body)} [${i.entryId}]`;
           })
           .join("\n");
         return `${type}:\n${lines}`;
       })
       .join("\n\n");
+    return `${grouped}\n\n${SNIPPET_FOOTER}`;
   }
-  return rows
-    .map((r) => {
-      const loc = [r.venue, r.area, r.city, r.country].filter(Boolean).join(", ");
-      return `• [${r.kind}] ${r.title}${loc ? ` (${loc})` : ""}: ${firstLine(r.body)} [${r.entryId}]`;
-    })
-    .join("\n");
+  return `${rows.map(snippetEntry).join("\n")}\n\n${SNIPPET_FOOTER}`;
 }
 
 function buildSearchTool(conversationId: string): RuntimeTool {
@@ -100,7 +150,8 @@ function buildSearchTool(conversationId: string): RuntimeTool {
     `Search the user's perpetual second-brain store (places they've visited with anecdotes, drinks they've had, plus durable facts/notes). Two modes, combinable:
 • Structured listing — pass kind/country/city/area/category to get an EXHAUSTIVE list (e.g. all restaurants in NYC; all beers via kind="drink" + category="beer"). Place results come back grouped by neighborhood, drink results grouped by type — each with its anecdote and entry id.
 • Fuzzy recall — pass a free "query" to semantically find something the user vaguely remembers ("that fact about my bike", "the negroni I liked").
-Pass both to scope a fuzzy search (e.g. query + city). Use country/city DISPLAY names (e.g. "New York", "United States"); matching is case-insensitive.`,
+Pass both to scope a fuzzy search (e.g. query + city). Use country/city DISPLAY names (e.g. "New York", "United States"); matching is case-insensitive.
+Small result sets and top fuzzy matches include each entry's FULL body. Long listings show first-line snippets marked with […] — call get_knowledge with the entry id whenever you need the complete text.`,
     {
       query: z.string().optional().describe("Free text for fuzzy semantic recall."),
       kind: kindEnum.optional().describe("Restrict to place | fact | note | drink."),
@@ -121,6 +172,7 @@ Pass both to scope a fuzzy search (e.g. query + city). Use country/city DISPLAY 
       );
       const hasQuery = Boolean(args.query?.trim());
       let rows: any[] = [];
+      let relevanceOrdered = false;
 
       if (hasQuery && embeddingsAvailable()) {
         const vec = await embed(args.query!);
@@ -149,6 +201,7 @@ Pass both to scope a fuzzy search (e.g. query + city). Use country/city DISPLAY 
               return true;
             })
             .slice(0, args.limit);
+          relevanceOrdered = rows.length > 0;
         }
       }
       if (rows.length === 0 && hasFilters) {
@@ -166,6 +219,7 @@ Pass both to scope a fuzzy search (e.g. query + city). Use country/city DISPLAY 
           query: args.query!,
           limit: args.limit,
         });
+        relevanceOrdered = rows.length > 0;
       }
 
       await convex.mutation(api.memoryEvents.emit, {
@@ -179,7 +233,38 @@ Pass both to scope a fuzzy search (e.g. query + city). Use country/city DISPLAY 
       });
 
       if (rows.length === 0) return runtimeText("Nothing in the knowledge store matched.");
-      return runtimeText(formatResults(rows));
+      return runtimeText(formatResults(rows, { relevanceOrdered }));
+    },
+  );
+}
+
+function buildGetTool(): RuntimeTool {
+  return defineRuntimeTool(
+    NAMESPACE,
+    "get_knowledge",
+    `Fetch ONE complete entry from the user's second-brain store by its entry id (the kn_… id shown in search_knowledge results). Returns the full body verbatim plus all metadata. Use whenever you need the entire text of a note/fact/anecdote — reciting steps or instructions back to the user, summarizing a saved recipe, appending to the right entry — rather than relying on a search snippet.`,
+    {
+      entryId: z.string().describe("Entry id from search_knowledge, e.g. kn_abc123_xyz."),
+    },
+    async (args) => {
+      const entry = await convex.query(api.knowledge.get, { entryId: args.entryId.trim() });
+      if (!entry) return runtimeText(`No entry found with id ${args.entryId}.`);
+      const loc = [entry.venue, entry.area, entry.city, entry.country]
+        .filter(Boolean)
+        .join(", ");
+      const day = (ms: number) => new Date(ms).toISOString().slice(0, 10);
+      const lines = [
+        `[${entry.kind}] ${entry.title} [${entry.entryId}]`,
+        loc ? `Where: ${loc}` : undefined,
+        entry.category ? `Category: ${entry.category}` : undefined,
+        entry.rating != null ? `Rating: ${entry.rating}★` : undefined,
+        entry.tags.length > 0 ? `Tags: ${entry.tags.join(", ")}` : undefined,
+        entry.visitedAt != null ? `Visited: ${day(entry.visitedAt)}` : undefined,
+        `Logged: ${day(entry.createdAt)}`,
+        "",
+        entry.body,
+      ].filter((l) => l !== undefined);
+      return runtimeText(lines.join("\n"));
     },
   );
 }
@@ -290,13 +375,13 @@ If this is a repeat of something already in the store (revisit a place, had the 
 
 // Full tool set (write + read) for the interaction agent.
 export function createKnowledgeTools(conversationId: string): RuntimeTool[] {
-  return [buildLogTool(conversationId), buildSearchTool(conversationId)];
+  return [buildLogTool(conversationId), buildSearchTool(conversationId), buildGetTool()];
 }
 
 // Read-only tool set for execution agents / automations — they can search the
 // store but never write to it.
 export function createKnowledgeReadTools(conversationId: string): RuntimeTool[] {
-  return [buildSearchTool(conversationId)];
+  return [buildSearchTool(conversationId), buildGetTool()];
 }
 
 export function createKnowledgeMcp(conversationId: string) {
