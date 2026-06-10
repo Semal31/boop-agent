@@ -4,6 +4,12 @@ import { convex } from "./convex-client.js";
 import { handleUserMessage } from "./interaction-agent.js";
 import { broadcast } from "./broadcast.js";
 import { validateImageHeader, MAX_IMAGE_BYTES, type ImageMediaType } from "./images/mime.js";
+import { classifyMedia, maxBytesFor } from "./media/mime.js";
+import {
+  transcribeMedia,
+  formatTranscriptBlock,
+  type TranscriptionResult,
+} from "./media/transcribe.js";
 
 const API_BASE = "https://api.sendblue.com/api";
 const MAX_CHUNK = 2900;
@@ -122,14 +128,50 @@ export function startTypingLoop(toNumber: string): () => void {
 
 type IngestedImage = { storageId: string; mediaType: ImageMediaType };
 
-export async function ingestSendblueImage(
+type IngestedMedia =
+  | { kind: "image"; image: IngestedImage }
+  | { kind: "audio" | "video"; transcript: TranscriptionResult };
+
+// Stream the body so we can abort early when the running total exceeds the
+// cap — content-length is often absent on CDN/redirect responses, and
+// `await res.arrayBuffer()` would otherwise buffer the entire payload before
+// any cap check fires.
+async function readCappedBody(
+  res: Response,
+  maxBytes: number,
+  label: string,
+): Promise<{ ok: true; buf: Buffer } | { ok: false; reason: string }> {
+  const reader = res.body?.getReader();
+  if (!reader) return { ok: false, reason: "download failed: no body" };
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel().catch(() => undefined);
+        return { ok: false, reason: `${label} too large: >${maxBytes} bytes` };
+      }
+      chunks.push(value);
+    }
+  } catch (err) {
+    return { ok: false, reason: `download failed: ${String(err)}` };
+  }
+  return { ok: true, buf: Buffer.concat(chunks) };
+}
+
+export async function ingestSendblueMedia(
   url: string,
-): Promise<{ ok: true; image: IngestedImage } | { ok: false; reason: string }> {
+): Promise<{ ok: true; media: IngestedMedia } | { ok: false; reason: string }> {
   let res: Response;
   try {
+    // Generous timeout: videos can be large, and this runs after the webhook
+    // has been answered, so nothing upstream is blocked on it.
     res = await fetch(url, {
       method: "GET",
-      signal: AbortSignal.timeout(10_000),
+      signal: AbortSignal.timeout(120_000),
     });
   } catch (err) {
     return { ok: false, reason: `download failed: ${String(err)}` };
@@ -137,66 +179,61 @@ export async function ingestSendblueImage(
   if (!res.ok) {
     return { ok: false, reason: `download failed: HTTP ${res.status}` };
   }
+
+  const contentType = res.headers.get("content-type") ?? undefined;
+  const kind = classifyMedia({ contentType, url });
+
+  if (kind === "audio" || kind === "video") {
+    const body = await readCappedBody(res, maxBytesFor(kind), kind);
+    if (!body.ok) return body;
+    try {
+      const transcript = await transcribeMedia(body.buf);
+      return { ok: true, media: { kind, transcript } };
+    } catch (err) {
+      const label = kind === "audio" ? "voice note" : "video";
+      return { ok: false, reason: `${label} transcription failed: ${String(err)}` };
+    }
+  }
+
+  // Everything else takes the image path, whose strict allowlist preserves
+  // today's "disallowed mime type" error for unsupported attachments.
   const lenHeader = res.headers.get("content-length");
-  const contentLength = lenHeader ? Number(lenHeader) : undefined;
   const check = validateImageHeader({
-    contentType: res.headers.get("content-type") ?? undefined,
-    contentLength,
+    contentType,
+    contentLength: lenHeader ? Number(lenHeader) : undefined,
   });
   if (!check.ok) {
     res.body?.cancel().catch(() => undefined);
     return { ok: false, reason: check.reason };
   }
-  // Stream the body so we can abort early when the running total exceeds
-  // MAX_IMAGE_BYTES — content-length is often absent on CDN/redirect
-  // responses, and `await res.arrayBuffer()` would otherwise buffer the
-  // entire payload before any cap check fires.
-  let buf: ArrayBuffer;
-  try {
-    const reader = res.body?.getReader();
-    if (!reader) return { ok: false, reason: "download failed: no body" };
-    const chunks: Uint8Array[] = [];
-    let total = 0;
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      total += value.byteLength;
-      if (total > MAX_IMAGE_BYTES) {
-        await reader.cancel().catch(() => undefined);
-        return {
-          ok: false,
-          reason: `image too large: >${MAX_IMAGE_BYTES} bytes`,
-        };
-      }
-      chunks.push(value);
-    }
-    buf = new ArrayBuffer(total);
-    const view = new Uint8Array(buf);
-    let offset = 0;
-    for (const c of chunks) {
-      view.set(c, offset);
-      offset += c.byteLength;
-    }
-  } catch (err) {
-    return { ok: false, reason: `download failed: ${String(err)}` };
-  }
+  const body = await readCappedBody(res, MAX_IMAGE_BYTES, "image");
+  if (!body.ok) return body;
 
   try {
     const uploadUrl = await convex.mutation(api.messages.generateUploadUrl, {});
     const upload = await fetch(uploadUrl, {
       method: "POST",
       headers: { "Content-Type": check.mediaType },
-      body: buf,
+      // Copy into a plain ArrayBuffer — Buffer's ArrayBufferLike backing
+      // doesn't satisfy the fetch BodyInit type.
+      body: new Uint8Array(body.buf).buffer,
       signal: AbortSignal.timeout(10_000),
     });
     if (!upload.ok) {
       return { ok: false, reason: `upload failed: HTTP ${upload.status}` };
     }
     const { storageId } = (await upload.json()) as { storageId: string };
-    return { ok: true, image: { storageId, mediaType: check.mediaType } };
+    return {
+      ok: true,
+      media: { kind: "image", image: { storageId, mediaType: check.mediaType } },
+    };
   } catch (err) {
     return { ok: false, reason: `upload failed: ${String(err)}` };
   }
+}
+
+export function composeInboundContent(text: string, transcriptBlocks: string[]): string {
+  return [text.trim(), ...transcriptBlocks].filter((p) => p.length > 0).join("\n\n");
 }
 
 export function createSendblueRouter(): express.Router {
@@ -228,14 +265,6 @@ export function createSendblueRouter(): express.Router {
       }
     }
 
-    const ingestResults = await Promise.all(rawUrls.map(ingestSendblueImage));
-    const ingested: IngestedImage[] = [];
-    const ingestErrors: string[] = [];
-    for (const r of ingestResults) {
-      if (r.ok) ingested.push(r.image);
-      else ingestErrors.push(r.reason);
-    }
-
     const conversationId = `sms:${from_number}`;
     const turnTag = Math.random().toString(36).slice(2, 8);
     const textForLog = typeof content === "string" ? content : "";
@@ -244,13 +273,30 @@ export function createSendblueRouter(): express.Router {
     const start = Date.now();
 
     broadcast("message_in", { conversationId, content, from_number, handle: message_handle });
+    // Answer the webhook before any heavy lifting — downloading and
+    // transcribing a video can take minutes, and Sendblue retries slow
+    // webhooks (retries get deduped above, but no reason to trip them).
     res.json({ ok: true });
 
     const stopTyping = startTypingLoop(from_number);
     try {
+      const ingestResults = await Promise.all(rawUrls.map(ingestSendblueMedia));
+      const ingested: IngestedImage[] = [];
+      const transcriptBlocks: string[] = [];
+      const ingestErrors: string[] = [];
+      for (const r of ingestResults) {
+        if (!r.ok) {
+          ingestErrors.push(r.reason);
+        } else if (r.media.kind === "image") {
+          ingested.push(r.media.image);
+        } else {
+          transcriptBlocks.push(formatTranscriptBlock(r.media.kind, r.media.transcript));
+        }
+      }
+
       const reply = await handleUserMessage({
         conversationId,
-        content: textForLog,
+        content: composeInboundContent(textForLog, transcriptBlocks),
         turnTag,
         images: ingested,
         mediaError: ingestErrors.length > 0 ? ingestErrors.join("; ") : undefined,
