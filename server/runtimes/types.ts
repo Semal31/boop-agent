@@ -3,6 +3,7 @@ import type { UsageTotals } from "../usage.js";
 
 export type RuntimeName = "claude" | "codex";
 export type RuntimeReasoningEffort = "minimal" | "low" | "medium" | "high" | "xhigh";
+export type ClaudeEffortLevel = "low" | "medium" | "high" | "xhigh" | "max";
 export type RuntimeMode = "dispatcher" | "execution" | "background";
 
 export type RuntimeImageBlock = {
@@ -31,6 +32,7 @@ export interface RuntimeRunRequest {
   systemPrompt: string;
   model: string;
   reasoningEffort?: RuntimeReasoningEffort;
+  claudeEffort?: ClaudeEffortLevel;
   tools: RuntimeTool[];
   claudeMcpServers?: Record<string, unknown>;
   allowedTools?: string[];

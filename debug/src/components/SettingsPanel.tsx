@@ -10,6 +10,7 @@ import { BrowserSection } from "./BrowserSection.js";
 
 type RuntimeChoice = "claude" | "codex";
 type ReasoningEffort = "minimal" | "low" | "medium" | "high" | "xhigh";
+type ClaudeEffort = "low" | "medium" | "high" | "xhigh" | "max";
 
 interface Option<T extends string = string> {
   value: T;
@@ -20,6 +21,7 @@ interface RuntimeConfigSnapshot {
   runtime: RuntimeChoice;
   model: string;
   reasoningEffort?: ReasoningEffort;
+  claudeEffort?: ClaudeEffort;
   billingMode: "api" | "codex-subscription";
 }
 
@@ -87,6 +89,25 @@ const CODEX_REASONING_EFFORTS: Option<ReasoningEffort>[] = [
   { value: "xhigh", label: "XHigh" },
 ];
 
+// Effort levels each Claude model accepts, per Anthropic's effort docs.
+// Keep in sync with CLAUDE_MODEL_EFFORTS in server/runtime-config.ts.
+const CLAUDE_EFFORTS: Record<string, Option<ClaudeEffort>[]> = {
+  "claude-opus-4-8": [
+    { value: "low", label: "Low" },
+    { value: "medium", label: "Medium" },
+    { value: "high", label: "High (default)" },
+    { value: "xhigh", label: "XHigh" },
+    { value: "max", label: "Max" },
+  ],
+  "claude-sonnet-4-6": [
+    { value: "low", label: "Low" },
+    { value: "medium", label: "Medium" },
+    { value: "high", label: "High (default)" },
+    { value: "max", label: "Max" },
+  ],
+  "claude-haiku-4-5-20251001": [],
+};
+
 // A short curated list for the dropdown, covering most US users plus a few
 // common international zones. The text input next to the dropdown lets the
 // user paste any IANA ID for the long tail.
@@ -126,6 +147,7 @@ async function updateRuntimeConfig(
     runtime: RuntimeChoice;
     model: string;
     reasoningEffort: ReasoningEffort;
+    claudeEffort: ClaudeEffort;
   }>,
 ): Promise<RuntimeConfigSnapshot> {
   const res = await fetch("/api/runtime-config", {
@@ -415,6 +437,7 @@ function RuntimeRow({ isDark }: { isDark: boolean }) {
   const storedHostedEffort = useQuery(api.settings.get, {
     key: "codex_reasoning_effort",
   });
+  const storedClaudeEffort = useQuery(api.settings.get, { key: "claude_effort" });
 
   const [serverConfig, setServerConfig] = useState<RuntimeConfigSnapshot | null>(
     null,
@@ -447,7 +470,7 @@ function RuntimeRow({ isDark }: { isDark: boolean }) {
     return () => {
       cancelled = true;
     };
-  }, [refreshServerConfig, storedRuntime, storedClaudeModel, storedHostedModel, storedHostedEffort]);
+  }, [refreshServerConfig, storedRuntime, storedClaudeModel, storedHostedModel, storedHostedEffort, storedClaudeEffort]);
 
   const runtime: RuntimeChoice =
     storedRuntime === "claude" || storedRuntime === "codex"
@@ -470,6 +493,14 @@ function RuntimeRow({ isDark }: { isDark: boolean }) {
     CODEX_REASONING_EFFORTS,
     serverConfig?.reasoningEffort ?? "medium",
   );
+  const claudeEffortOptions = CLAUDE_EFFORTS[activeModel] ?? [];
+  // serverConfig.claudeEffort is the effective (clamped) level, so it doubles
+  // as the fallback when the stored value isn't valid for the active model.
+  const claudeEffortFallback =
+    serverConfig?.runtime === "claude" && serverConfig.claudeEffort
+      ? optionValue(serverConfig.claudeEffort, claudeEffortOptions, "high" as ClaudeEffort)
+      : ("high" as ClaudeEffort);
+  const claudeEffort = optionValue(storedClaudeEffort, claudeEffortOptions, claudeEffortFallback);
 
   async function savePatch(
     key: string,
@@ -477,6 +508,7 @@ function RuntimeRow({ isDark }: { isDark: boolean }) {
       runtime: RuntimeChoice;
       model: string;
       reasoningEffort: ReasoningEffort;
+      claudeEffort: ClaudeEffort;
     }>,
   ) {
     setSaving(key);
@@ -504,6 +536,10 @@ function RuntimeRow({ isDark }: { isDark: boolean }) {
         storedHostedEffort,
         serverConfig?.reasoningEffort ?? "medium",
       ),
+    );
+  } else {
+    debugParts.push(
+      settingDebug("claude_effort", storedClaudeEffort, serverConfig?.claudeEffort ?? "high"),
     );
   }
   debugParts.push(`billing: ${serverConfig?.billingMode ?? "…"}`);
@@ -589,27 +625,51 @@ function RuntimeRow({ isDark }: { isDark: boolean }) {
               >
                 Reasoning effort
               </span>
-              <select
-                value={reasoningEffort}
-                disabled={
-                  runtime !== "codex" ||
-                  saving !== null ||
-                  storedHostedEffort === undefined
-                }
-                onChange={(e) =>
-                  savePatch(`codex_reasoning_effort:${e.target.value}`, {
-                    runtime: "codex",
-                    reasoningEffort: e.target.value as ReasoningEffort,
-                  })
-                }
-                className={`w-full rounded-xl border px-3 py-2 text-xs outline-none transition-colors focus:border-zinc-400 disabled:opacity-50 ${inputBg}`}
-              >
-                {CODEX_REASONING_EFFORTS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
+              {runtime === "codex" ? (
+                <select
+                  value={reasoningEffort}
+                  disabled={saving !== null || storedHostedEffort === undefined}
+                  onChange={(e) =>
+                    savePatch(`codex_reasoning_effort:${e.target.value}`, {
+                      runtime: "codex",
+                      reasoningEffort: e.target.value as ReasoningEffort,
+                    })
+                  }
+                  className={`w-full rounded-xl border px-3 py-2 text-xs outline-none transition-colors focus:border-zinc-400 disabled:opacity-50 ${inputBg}`}
+                >
+                  {CODEX_REASONING_EFFORTS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <select
+                  value={claudeEffortOptions.length === 0 ? "unsupported" : claudeEffort}
+                  disabled={
+                    claudeEffortOptions.length === 0 ||
+                    saving !== null ||
+                    storedClaudeEffort === undefined
+                  }
+                  onChange={(e) =>
+                    savePatch(`claude_effort:${e.target.value}`, {
+                      runtime: "claude",
+                      claudeEffort: e.target.value as ClaudeEffort,
+                    })
+                  }
+                  className={`w-full rounded-xl border px-3 py-2 text-xs outline-none transition-colors focus:border-zinc-400 disabled:opacity-50 ${inputBg}`}
+                >
+                  {claudeEffortOptions.length === 0 ? (
+                    <option value="unsupported">Not supported</option>
+                  ) : (
+                    claudeEffortOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))
+                  )}
+                </select>
+              )}
             </label>
           </div>
 

@@ -1,6 +1,10 @@
 import { api } from "../convex/_generated/api.js";
 import { convex } from "./convex-client.js";
-import type { RuntimeName, RuntimeReasoningEffort } from "./runtimes/types.js";
+import type {
+  ClaudeEffortLevel,
+  RuntimeName,
+  RuntimeReasoningEffort,
+} from "./runtimes/types.js";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -8,6 +12,7 @@ const RUNTIME_KEY = "runtime";
 const CLAUDE_MODEL_KEY = "model";
 const CODEX_MODEL_KEY = "codex_model";
 const CODEX_REASONING_EFFORT_KEY = "codex_reasoning_effort";
+const CLAUDE_EFFORT_KEY = "claude_effort";
 const BROWSER_ENABLED_KEY = "browser_enabled";
 const BROWSER_PROFILE_DIR_KEY = "browser_profile_dir";
 const BROWSER_SHOW_UI_KEY = "browser_show_ui";
@@ -23,6 +28,7 @@ export interface RuntimeConfig {
   runtime: RuntimeName;
   model: string;
   reasoningEffort?: RuntimeReasoningEffort;
+  claudeEffort?: ClaudeEffortLevel;
   billingMode: "api" | "codex-subscription";
 }
 
@@ -109,6 +115,36 @@ const KNOWN_REASONING_EFFORTS = new Set<RuntimeReasoningEffort>([
   "high",
   "xhigh",
 ]);
+
+// Effort levels each Claude model accepts, per Anthropic's effort docs
+// (https://platform.claude.com/docs/en/build-with-claude/effort). The API
+// default is "high" on all of them; Haiku takes no effort parameter at all.
+const CLAUDE_EFFORT_ORDER = ["low", "medium", "high", "xhigh", "max"] as const;
+
+export const CLAUDE_MODEL_EFFORTS: Record<string, readonly ClaudeEffortLevel[]> = {
+  "claude-opus-4-8": ["low", "medium", "high", "xhigh", "max"],
+  "claude-sonnet-4-6": ["low", "medium", "high", "max"],
+  "claude-haiku-4-5-20251001": [],
+};
+
+export function resolveClaudeEffortInput(input: string): ClaudeEffortLevel | null {
+  const lower = input.trim().toLowerCase() as ClaudeEffortLevel;
+  return CLAUDE_EFFORT_ORDER.includes(lower) ? lower : null;
+}
+
+// Highest supported level at or below the requested one (mirrors Claude
+// Code's own fallback); undefined when the model takes no effort parameter.
+export function clampClaudeEffort(
+  effort: ClaudeEffortLevel,
+  model: string,
+): ClaudeEffortLevel | undefined {
+  const supported = CLAUDE_MODEL_EFFORTS[model];
+  if (!supported || supported.length === 0) return undefined;
+  for (let i = CLAUDE_EFFORT_ORDER.indexOf(effort); i >= 0; i--) {
+    if (supported.includes(CLAUDE_EFFORT_ORDER[i])) return CLAUDE_EFFORT_ORDER[i];
+  }
+  return supported[0];
+}
 
 export function resolveRuntimeInput(input: string): RuntimeName | null {
   return RUNTIME_ALIASES[input.trim().toLowerCase()] ?? null;
@@ -201,6 +237,7 @@ export async function getRuntimeConfig(): Promise<RuntimeConfig> {
   const runtime = resolveRuntimeValue(await getSetting(RUNTIME_KEY));
   let model: string;
   let reasoningEffort: RuntimeReasoningEffort | undefined;
+  let claudeEffort: ClaudeEffortLevel | undefined;
   let billingMode: RuntimeConfig["billingMode"];
 
   if (runtime === "codex") {
@@ -211,10 +248,14 @@ export async function getRuntimeConfig(): Promise<RuntimeConfig> {
   } else {
     const stored = await getSetting(CLAUDE_MODEL_KEY);
     model = stored && KNOWN_MODELS.has(stored) ? stored : claudeEnvFallback();
+    const requestedEffort = resolveClaudeEffortInput(
+      (await getSetting(CLAUDE_EFFORT_KEY)) ?? process.env.BOOP_CLAUDE_EFFORT ?? "",
+    );
+    if (requestedEffort) claudeEffort = clampClaudeEffort(requestedEffort, model);
     billingMode = "api";
   }
 
-  const value = { runtime, model, reasoningEffort, billingMode };
+  const value = { runtime, model, reasoningEffort, claudeEffort, billingMode };
   cachedConfig = { at: Date.now(), value };
   return value;
 }
@@ -242,6 +283,14 @@ export async function setCodexReasoningEffort(
 ): Promise<void> {
   await convex.mutation(api.settings.set, {
     key: CODEX_REASONING_EFFORT_KEY,
+    value: effort,
+  });
+  cachedConfig = null;
+}
+
+export async function setClaudeEffort(effort: ClaudeEffortLevel): Promise<void> {
+  await convex.mutation(api.settings.set, {
+    key: CLAUDE_EFFORT_KEY,
     value: effort,
   });
   cachedConfig = null;

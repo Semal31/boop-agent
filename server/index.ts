@@ -21,9 +21,11 @@ import { closeLocalBrowser } from "./browser/launcher.js";
 import { createChangelogRouter } from "./changelog.js";
 import {
   getRuntimeConfig,
+  resolveClaudeEffortInput,
   resolveModelInput,
   resolveReasoningEffortInput,
   resolveRuntimeInput,
+  setClaudeEffort,
   setCodexReasoningEffort,
   setRuntimeModel,
   setRuntimeProvider,
@@ -80,6 +82,7 @@ async function main() {
         runtime?: unknown;
         model?: unknown;
         reasoningEffort?: unknown;
+        claudeEffort?: unknown;
       };
       let runtime =
         body.runtime === undefined
@@ -116,6 +119,17 @@ async function main() {
           return;
         }
         await setCodexReasoningEffort(effort);
+      }
+
+      if (body.claudeEffort !== undefined) {
+        const effort = resolveClaudeEffortInput(String(body.claudeEffort));
+        if (!effort) {
+          res.status(400).json({
+            error: `Unknown Claude effort "${String(body.claudeEffort)}"`,
+          });
+          return;
+        }
+        await setClaudeEffort(effort);
       }
 
       res.json(await getRuntimeConfig());

@@ -9,8 +9,14 @@ import { activeProvider as activeEmbeddingProvider } from "./embeddings.js";
 import { listEnabledIntegrations } from "./integrations/registry.js";
 import { createClaudeMcpServer } from "./runtimes/claude.js";
 import { defineRuntimeTool } from "./runtimes/tool.js";
-import { runtimeText, type RuntimeReasoningEffort, type RuntimeTool } from "./runtimes/types.js";
 import {
+  runtimeText,
+  type ClaudeEffortLevel,
+  type RuntimeReasoningEffort,
+  type RuntimeTool,
+} from "./runtimes/types.js";
+import {
+  CLAUDE_MODEL_EFFORTS,
   CODEX_MODEL_ALIASES,
   KNOWN_CODEX_MODELS,
   KNOWN_MODELS,
@@ -20,6 +26,7 @@ import {
   getBrowserSettings,
   resolveModelInput,
   resolveRuntimeInput,
+  setClaudeEffort,
   setCodexReasoningEffort,
   setRuntimeModel,
   setRuntimeProvider,
@@ -33,6 +40,7 @@ import {
 const NAMESPACE = "boop-self";
 
 const reasoningEffortSchema = z.enum(["minimal", "low", "medium", "high", "xhigh"]);
+const claudeEffortSchema = z.enum(["low", "medium", "high", "xhigh", "max"]);
 
 export function createSelfTools(): RuntimeTool[] {
   return [
@@ -50,6 +58,7 @@ export function createSelfTools(): RuntimeTool[] {
           runtime: runtime.runtime,
           model: runtime.model,
           reasoningEffort: runtime.reasoningEffort ?? null,
+          claudeEffort: runtime.claudeEffort ?? null,
           billingMode: runtime.billingMode,
           claudeEnvDefault: process.env.BOOP_MODEL ?? "claude-sonnet-4-6",
           codexEnvDefault: process.env.BOOP_CODEX_MODEL ?? "gpt-5.5",
@@ -168,6 +177,28 @@ Use when the user says "use opus", "switch to sonnet", "use Codex mini", "make i
       async ({ effort }) => {
         await setCodexReasoningEffort(effort as RuntimeReasoningEffort);
         return runtimeText(`Codex reasoning effort set to ${effort}. Next Codex turn will use it.`);
+      },
+    ),
+    defineRuntimeTool(
+      NAMESPACE,
+      "set_claude_effort",
+      `Set the effort level for future Claude turns. "high" is the model default; "low"/"medium" trade depth for speed and cost; "xhigh"/"max" reason deeper. Per-model support: ${Object.entries(
+        CLAUDE_MODEL_EFFORTS,
+      )
+        .map(([m, levels]) => `${m}: ${levels.length ? levels.join("/") : "none"}`)
+        .join("; ")}. Unsupported levels are clamped down to the nearest supported one.`,
+      { effort: claudeEffortSchema },
+      async ({ effort }) => {
+        await setClaudeEffort(effort as ClaudeEffortLevel);
+        const config = await getRuntimeConfig();
+        const effective = config.runtime === "claude" ? config.claudeEffort : undefined;
+        let note = "";
+        if (config.runtime === "claude" && effective !== effort) {
+          note = effective
+            ? ` Note: ${config.model} doesn't support ${effort}; it will run at ${effective}.`
+            : ` Note: ${config.model} doesn't take an effort parameter, so this has no effect until a supporting model is selected.`;
+        }
+        return runtimeText(`Claude effort set to ${effort}. Next Claude turn will use it.${note}`);
       },
     ),
     defineRuntimeTool(

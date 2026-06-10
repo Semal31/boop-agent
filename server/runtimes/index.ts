@@ -5,12 +5,13 @@ import { runCodexAppServerAgent } from "./codex-app-server.js";
 
 export async function runAgentRuntime(
   config: RuntimeConfig,
-  request: Omit<RuntimeRunRequest, "model" | "reasoningEffort">,
+  request: Omit<RuntimeRunRequest, "model" | "reasoningEffort" | "claudeEffort">,
 ): Promise<RuntimeRunResult> {
   const fullRequest = {
     ...request,
     model: config.model,
     reasoningEffort: config.reasoningEffort,
+    claudeEffort: config.claudeEffort,
   };
   switch (config.runtime) {
     case "claude":
